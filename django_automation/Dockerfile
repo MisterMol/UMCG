@@ -1,0 +1,56 @@
+FROM python:3.13.3-slim
+
+# Systeeminstellingen
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Benodigde libs voor Playwright
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    wget \
+    gnupg \
+    libglib2.0-0 \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libxcomposite1 \
+    libxrandr2 \
+    libxdamage1 \
+    libxkbcommon0 \
+    libxshmfence1 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libx11-xcb1 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libdbus-1-3 \
+    libexpat1 \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
+    libxfixes3 \
+    libpango-1.0-0 \
+    libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Werkmap
+WORKDIR /app
+
+# Python requirements
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# App code
+COPY . .
+
+# Maak scripts uitvoerbaar
+RUN chmod +x ./entrypoint.sh ./celery_worker.sh
+
+# Playwright browsers installeren (1x in Dockerfile = voorkomt runtime crashes)
+RUN playwright install --with-deps
+
+# Startscript
+ENTRYPOINT ["/app/entrypoint.sh"]

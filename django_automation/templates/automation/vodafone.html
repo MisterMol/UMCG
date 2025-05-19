@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}Vodafone{% endblock %}
+{% block content %}
+<style>
+    .fade {
+        transition: opacity 0.5s ease-in-out;
+        opacity: 1;
+    }
+
+    .fade-out {
+        opacity: 0;
+    }
+
+    .fade-text {
+        transition: opacity 0.3s ease-in-out;
+        opacity: 1;
+    }
+
+    .fade-text.out {
+        opacity: 0;
+    }
+
+    #loginStatusPersistent {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+</style>
+<div class="container mt-4">
+    <div class="row g-3 align-items-start">
+        <!-- Sidebar -->
+        <div class="col-lg-3">
+            <div class="list-group shadow-sm">
+                <button type="button" class="list-group-item list-group-item-action"
+                    data-url="{% url 'vodafone_login_form' %}">
+                    <i class="fas fa-sign-in-alt me-2"></i> Inloggen
+                </button>
+                <button type="button" class="list-group-item list-group-item-action" data-url="#">
+                    <i class="fas fa-chart-line me-2"></i> Verbruik controleren
+                </button>
+            </div>
+        </div>
+
+        <!-- Form Container (groter) -->
+        <div class="col-lg-6">
+            <div id="form-container" class="card shadow-sm p-4 h-100">
+                <p class="text-muted">Selecteer een actie aan de linkerkant om te starten.</p>
+            </div>
+        </div>
+
+        <!-- Meldingen (Live + Persistent) -->
+        <div class="col-lg-3">
+            <!-- Live melding -->
+            <div id="loginStatusLive" class="alert alert-info fade show d-none mb-3" role="alert">
+                <span id="loginStatusMessage">Login gestart...</span>
+            </div>
+
+            <!-- Blijvende meldingen -->
+            <div id="loginStatusPersistent">
+            </div>
+        </div>
+
+        {% if success %}
+        <div class="col-12">
+            <div class="alert alert-success mt-3">
+                ✅ Inloggen gelukt: {{ result }}
+            </div>
+        </div>
+        {% elif error %}
+        <div class="col-12">
+            <div class="alert alert-danger mt-3">
+                ❌ Fout bij inloggen: {{ error }}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <!-- 2FA Modal -->
+    <div class="modal fade" id="twoFAModal" tabindex="-1" aria-labelledby="twoFALabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="twoFALabel">Bevestig sms-code</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Sluiten"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Je hebt <span id="timer">180</span> seconden om de ontvangen sms-code in te voeren.</p>
+                    <input type="text" class="form-control mb-2" id="input2FACode" placeholder="Sms-code">
+                    <div class="d-flex justify-content-between">
+                        <button class="btn btn-danger" onclick="cancel2FA()">Annuleer</button>
+                        <button class="btn btn-success" onclick="submit2FACode()">Verstuur</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+
+<script>
+    function initVodafoneForm() {
+        const form = document.getElementById('loginForm');
+        if (!form) {
+            console.warn("Formulier niet gevonden bij initVodafoneForm");
+            return;
+        }
+
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (!form.checkValidity()) {
+                form.classList.add('was-validated');
+                return;
+            }
+
+            const username = form.username.value;
+            const password = form.password.value;
+            const zoeknummer = form.zoeknummer.value;
+            const csrfToken = form.querySelector('[name="csrfmiddlewaretoken"]').value;
+
+            startVodafoneLogin(username, password, zoeknummer, csrfToken);
+        });
+    }
+
+
+
+    document.querySelectorAll(".list-group-item").forEach(item => {
+        item.addEventListener("click", () => {
+            fetch(item.dataset.url)
+                .then(response => response.text())
+                .then(html => {
+                    const container = document.getElementById("form-container");
+                    container.innerHTML = html;
+
+                    // Belangrijk !! initialiseer JS opnieuw voor het formulier
+                    initVodafoneForm();
+                });
+        });
+    });
+</script>
+<script>
+    let currentToken = null;
+    let twoFATimer = null;
+
+    function startVodafoneLogin(username, password, zoeknummer, csrfToken) {
+        const liveBox = document.getElementById("loginStatusLive");
+        const messageEl = document.getElementById("loginStatusMessage");
+        const persistentBox = document.getElementById("loginStatusPersistent");
+
+        let loginCompleted = false;
+
+        function updateLiveMessage(message, iconClass, type = "info") {
+            messageEl.classList.add("fade-text", "out");
+            setTimeout(() => {
+                messageEl.innerHTML = `<i class="icon ${iconClass}"></i> ${message}`;
+                messageEl.classList.remove("out");
+                liveBox.className = `alert alert-${type} fade show`;
+                liveBox.classList.remove("d-none");
+            }, 200);
+        }
+
+        function addPersistentMessage(message, iconClass, type = "info") {
+            const alert = document.createElement("div");
+            alert.className = `alert alert-${type} mt-2`;
+            alert.innerHTML = `<i class="icon ${iconClass}"></i> ${message}`;
+            persistentBox.appendChild(alert);
+            persistentBox.scrollTop = persistentBox.scrollHeight;
+
+            const alerts = persistentBox.querySelectorAll(".alert");
+            if (alerts.length > 8) {
+                persistentBox.removeChild(alerts[0]);
+            }
+        }
+
+        updateLiveMessage("Login wordt voorbereid...", "fas fa-spinner fa-spin", "info");
+
+        fetch("/automation/vodafone/start-login/", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": csrfToken
+            },
+            body: JSON.stringify({ username, password, zoeknummer })
+        })
+
+            .then(response => {
+                if (!response.ok) throw new Error(`Serverfout: ${response.status} ${response.statusText}`);
+                return response.json();
+            })
+            .then(data => {
+                if (data.token) {
+                    currentToken = data.token;
+
+                    const eventSource = new EventSource(`/automation/vodafone/stream/${data.token}/`);
+                    eventSource.onmessage = function (event) {
+                        const data = JSON.parse(event.data);
+                        const { message, icon_class, success } = data;
+                        const type = success ? "success" : "info";
+
+                        if (message.includes("2FA vereist")) {
+                            show2FAModal(currentToken);
+                        }
+
+                        if (message.includes("Loginproces voltooid")) {
+                            loginCompleted = true;
+                            fetchGraphqlResult(currentToken);
+                        }
+
+                        addPersistentMessage(message, icon_class, type);
+                    };
+
+                    eventSource.onerror = function () {
+                        if (!loginCompleted) {
+                            addPersistentMessage("Verbinding met server verbroken.", "fas fa-times-circle", "danger");
+                        } else {
+                            addPersistentMessage("Loginproces afgerond. Verbinding gesloten.", "fas fa-info-circle", "warning");
+                        }
+                        liveBox.classList.add("d-none");
+                        eventSource.close();
+                    };
+                } else {
+                    addPersistentMessage("Start mislukt: " + (data.message || "Onbekende fout"), "fas fa-exclamation-triangle", "danger");
+                }
+            })
+            .catch(error => {
+                console.error("Loginfout:", error);
+                addPersistentMessage("Fout tijdens login: " + error.message, "fas fa-exclamation-circle", "danger");
+            });
+    }
+
+    function show2FAModal(token) {
+        currentToken = token;
+        const modalElement = document.getElementById('twoFAModal');
+        const modal = new bootstrap.Modal(modalElement);
+        modal.show();
+
+        setTimeout(() => {
+            document.getElementById('input2FACode').focus();
+        }, 300);
+
+        let secondsLeft = 180;
+        document.getElementById('timer').innerText = secondsLeft;
+        twoFATimer = setInterval(() => {
+            secondsLeft--;
+            document.getElementById('timer').innerText = secondsLeft;
+            if (secondsLeft <= 0) {
+                clearInterval(twoFATimer);
+                cancel2FA();
+                modal.hide();
+            }
+        }, 1000);
+    }
+
+
+    function submit2FACode() {
+        const code = document.getElementById('input2FACode').value;
+        if (!code || !currentToken) return;
+
+        fetch('/automation/vodafone/submit-2fa-code/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `token=${currentToken}&code=${code}`
+        }).then(() => {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('twoFAModal'));
+            if (modal) modal.hide();
+            clearInterval(twoFATimer);
+        });
+    }
+
+    function cancel2FA() {
+        if (!currentToken) return;
+        fetch('/automation/vodafone/cancel-2fa/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `token=${currentToken}`
+        }).then(() => {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('twoFAModal'));
+            if (modal) modal.hide();
+            clearInterval(twoFATimer);
+        });
+    }
+</script>
+<script>
+    document.addEventListener('shown.bs.modal', function (event) {
+        if (event.target.id === 'twoFAModal') {
+            const input = document.getElementById('input2FACode');
+            input.focus();
+
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submit2FACode();
+                }
+            }, { once: true });
+        }
+    });
+    function fetchGraphqlResult(token) {
+        fetch("/automation/vodafone/graphql-resultaat-ophalen/", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ token: token })
+        })
+            .then(response => response.json())
+            .then(result => {
+                console.log("[GraphQL Resultaat]", result);  // <-- dit print alles in je browser console
+                addPersistentMessage("✅ GraphQL resultaat ontvangen!", "fas fa-database", "success");
+                // eventueel hier de data verwerken of tonen in UI
+            })
+            .catch(error => {
+                console.error("Fout bij ophalen GraphQL resultaat:", error);
+                addPersistentMessage("❌ Fout bij ophalen van resultaat", "fas fa-bug", "danger");
+            });
+    }
+
+</script>
+
+{% endblock %}
