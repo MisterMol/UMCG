@@ -1,4 +1,5 @@
 from playwright.sync_api import sync_playwright
+from session_manager.sessions_manager import get_session, save_session
 import time
 from django.core.cache import cache
 import json
@@ -101,14 +102,34 @@ def vodafone_login(username, password, token, zoeknummer):
             payload["data"] = data
         return f'data: {json.dumps(payload)}\n\n'
 
+    sessie_data = get_session("vodafone", username)
+    sessie_geldig = False
+
+    # 1. Controleer of sessie geldig is
+    if sessie_data:
+        yield send("Bestaande sessie gevonden, controleren op geldigheid...", "fas fa-cookie")
+        try:
+            test_result = send_graphql_request(sessie_data, zoeknummer)
+            if test_result.get("data") or test_result.get("contacts"):
+                yield send("Sessie is geldig.", "fas fa-check-circle")
+                sessie_geldig = True
+                print(test_result)
+            else:
+                raise Exception("Sessie lijkt ongeldig.")
+        except Exception as e:
+            yield send(f"Oude sessie ongeldig: {str(e)}", "fas fa-exclamation-triangle")
+            sessie_data = None
+
+    # 2. Login uitvoeren indien geen geldige sessie
+    if not sessie_geldig:
+        yield send("Browser wordt gestart...", "fas fa-spinner fa-spin")
+
     def wait_for_bearer_token(page, timeout=10):
         for _ in range(timeout * 2):
             token = page.evaluate("window.localStorage.getItem('auth-token')")
             if token:
-                print("[DEBUG] Bearer token gevonden in localStorage")
                 return token
             time.sleep(0.5)
-        print("[FOUT] Geen bearer token in localStorage gevonden")
         return None
 
     bearer_token_container = {}
@@ -122,7 +143,6 @@ def vodafone_login(username, password, token, zoeknummer):
 
         auth_header = lowercase_headers.get("authorization")
         if auth_header and auth_header.startswith("Bearer "):
-            print("[DEBUG] Bearer token uit header:", auth_header)
             bearer_token_container["token"] = auth_header.split(" ")[1]
 
         post_data = request.post_data
@@ -133,8 +153,6 @@ def vodafone_login(username, password, token, zoeknummer):
 
         route.continue_()
 
-    yield send("Browser wordt gestart...", "fas fa-spinner fa-spin")
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         try:
@@ -142,7 +160,17 @@ def vodafone_login(username, password, token, zoeknummer):
             page.route("**/graphql", intercept_graphql)
 
             yield send("Pagina laden...", "fas fa-globe")
+
             page.goto("https://www.vodafone.nl/account/inloggen")
+            page.wait_for_load_state("domcontentloaded")
+
+            if sessie_geldig:
+                yield send("localStorage herstellen...", "fas fa-database")
+                for item in sessie_data.get("local_storage", []):
+                    page.evaluate(f"window.localStorage.setItem('{item['name']}', '{item['value']}')")
+                yield send("localStorage hersteld voor sessie", "fas fa-database")
+                page.reload()
+                page.wait_for_load_state("domcontentloaded")
 
             page.wait_for_selector("#j_username")
             page.fill("#j_username", username)
@@ -157,8 +185,15 @@ def vodafone_login(username, password, token, zoeknummer):
             yield send("Formulier verstuurd, wacht op reactie...", "fas fa-paper-plane")
             page.wait_for_load_state("networkidle")
 
+            # 2FA controle
             if page.query_selector("#code"):
                 yield send("2FA vereist. Wacht op invoer sms-code...", "fas fa-lock")
+
+                trust_checkbox = page.query_selector("#trustedDevice")
+                if trust_checkbox and trust_checkbox.is_visible():
+                    trust_checkbox.check()
+                    yield send("Vertrouw dit apparaat aangevinkt.", "fas fa-shield-alt")
+
                 for _ in range(180):
                     code = cache.get(f"2fa_code:{token}")
                     if code:
@@ -172,11 +207,12 @@ def vodafone_login(username, password, token, zoeknummer):
                     yield send("Timeout: geen 2FA code ontvangen.", "fas fa-hourglass-end")
                     browser.close()
                     return
+
                 page.fill("#code", code)
                 page.click("button[data-cy='confirm-sms-token-form-submit-button']")
                 yield send("2FA code ingevuld, controleren...", "fas fa-spinner fa-spin")
-                page.wait_for_load_state("networkidle")
 
+            # Login validatie
             if "error.html" in page.url or "Inloggen is niet gelukt" in page.title():
                 yield send("Inloggen is niet gelukt.", "fas fa-times-circle")
                 browser.close()
@@ -193,37 +229,30 @@ def vodafone_login(username, password, token, zoeknummer):
             if not bearer_token:
                 bearer_token = bearer_token_container.get("token")
 
-            data_response = {
+            local_storage = page.evaluate("Object.entries(window.localStorage)")
+            sessie_data = {
                 "bearer_token": bearer_token,
                 "graphql_headers": graphql_headers_container,
                 "graphql_payload": graphql_payload_container,
-                "account_id": graphql_headers_container.get("x-account-id")
+                "account_id": graphql_headers_container.get("x-account-id"),
+                "cookies": page.context.cookies(),
+                "account_url": page.url,
+                "local_storage": [{"name": k, "value": v} for k, v in local_storage]
             }
 
-            if bearer_token and zoeknummer:
-                sessie_data = {
-                    "bearer_token": bearer_token,
-                    "graphql_headers": graphql_headers_container,
-                    "graphql_payload": graphql_payload_container,
-                    "account_id": graphql_headers_container.get("x-account-id"),
-                    "cookies": page.context.cookies(),
-                    "account_url": page.url
-                }
-                cache.set(f"vodafone_session:{token}", sessie_data, timeout=300)
+            save_session("vodafone", username, sessie_data)
+            yield send("Nieuwe sessie opgeslagen", "fas fa-save")
 
+            if bearer_token and zoeknummer:
                 try:
                     lookup_result = send_graphql_request(sessie_data, zoeknummer)
                     cache.set(f"graphql_result:{token}", lookup_result, timeout=300)
                     yield send(f"result = {lookup_result}", "fas fa-search", True, lookup_result)
-                    print(lookup_result)
                     yield send("Nummergegevens opgehaald.", "fas fa-search", True, lookup_result)
                 except Exception as e:
                     yield send(f"Lookup fout: {str(e)}", "fas fa-bug")
-
             else:
-                yield send("Fout: Bearer token niet gevonden", "fas fa-bug", False, data_response)
-
-            print(data_response)
+                yield send("Fout: Bearer token niet gevonden", "fas fa-bug", False, sessie_data)
 
         except Exception as e:
             yield send(f"Fout: {str(e)}", "fas fa-bug")

@@ -131,7 +131,6 @@ CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'Europe/Amsterdam'  # ✅ Optioneel: Nederlandse tijdzone
+CELERY_TIMEZONE = 'Europe/Amsterdam' 
 
-# Optioneel: om lange taken later te kunnen volgen of opnieuw te starten
 CELERY_RESULT_EXTENDED = True
