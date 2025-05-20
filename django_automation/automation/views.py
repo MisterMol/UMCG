@@ -12,6 +12,14 @@ import json
 import uuid
 import re
 import requests
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.debug("Debugbericht")
+logger.info("Info")
+logger.error("Foutmelding")
+
 # Create your views here.
 
 
@@ -120,20 +128,38 @@ def graphql_nummer_lookup(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@require_POST
+
 @csrf_exempt
 def haal_graphql_resultaat_op(request):
     try:
+        if request.method != "POST":
+            return JsonResponse({"error": "Alleen POST ondersteund"}, status=405)
+
+        print("Request method:", request.method)
+        print("Content-Type:", request.headers.get("Content-Type"))
+        print("Request body (raw):", request.body)
+
+        if not request.body:
+            return JsonResponse({"error": "Lege body ontvangen"}, status=400)
+
         data = json.loads(request.body)
+        print("DATA == ", data)
+
         token = data.get("token")
+        print("OPHAAL KEY == ", f"graphql_result:{token}")
+
         if not token:
             return JsonResponse({"error": "Token ontbreekt"}, status=400)
 
         result = cache.get(f"graphql_result:{token}")
-        if not result:
+        print("CACHE RESULTAAT == ", result)
+
+        if result is None:
             return JsonResponse({"error": "Geen resultaat gevonden"}, status=404)
 
+        print("RESULT als tekst == ", json.dumps(result, indent=2, ensure_ascii=False))
         return JsonResponse(result, safe=False)
+
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 

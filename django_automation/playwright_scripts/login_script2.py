@@ -1,4 +1,5 @@
 from playwright.sync_api import sync_playwright
+from session_manager.sessions_manager import get_session, save_session
 import time
 from django.core.cache import cache
 import json
@@ -115,8 +116,6 @@ def validate_existing_session(sessie_data, zoeknummer):
         pass
     return False, None
 
-
-
 def wait_for_2fa_code(token, browser, send):
     for _ in range(180):
         code = cache.get(f"2fa_code:{token}")
@@ -130,8 +129,6 @@ def wait_for_2fa_code(token, browser, send):
     yield send("Timeout: geen 2FA code ontvangen.", "fas fa-hourglass-end")
     browser.close()
     return None
-
-
 
 def wait_for_bearer_token(page, timeout=10):
     for _ in range(timeout * 2):
@@ -170,17 +167,23 @@ def setup_session_data(page, bearer_token, graphql_headers, graphql_payload):
         "local_storage": [{"name": k, "value": v} for k, v in local_storage]
     }
 
-def vodafone_login(username, password, token, zoeknummer_raw):
+def vodafone_login(username, password, token, zoeknummer):
     yield send_message("Sessie ophalen...", "fas fa-cookie")
+    sessie_data = get_session("vodafone", username)
+    sessie_geldig = False
 
-    
-    zoeknummers = [zn.strip() for zn in zoeknummer_raw.split(",") if zn.strip()]
-    
-    if not zoeknummers:
-        yield send_message("Geen geldige nummers opgegeven.", "fas fa-exclamation-triangle")
-        return
-    
-    yield send_message("Browser wordt gestart...", "fas fa-spinner fa-spin")
+    if sessie_data:
+        yield send_message("Bestaande sessie gevonden, controleren op geldigheid...", "fas fa-cookie")
+        sessie_geldig, test_result = validate_existing_session(sessie_data, zoeknummer)
+        if sessie_geldig:
+            yield send_message("Sessie is geldig.", "fas fa-check-circle")
+            print(test_result)
+        else:
+            yield send_message("Oude sessie ongeldig.", "fas fa-exclamation-triangle")
+            sessie_data = None
+
+    if not sessie_geldig:
+        yield send_message("Browser wordt gestart...", "fas fa-spinner fa-spin")
 
     bearer_token_container = {}
     graphql_headers_container = {}
@@ -197,6 +200,13 @@ def vodafone_login(username, password, token, zoeknummer_raw):
             yield send_message("Pagina laden...", "fas fa-globe")
             page.goto("https://www.vodafone.nl/account/inloggen")
             page.wait_for_load_state("domcontentloaded")
+
+            if sessie_geldig:
+                yield send_message("localStorage herstellen...", "fas fa-database")
+                for item in sessie_data.get("local_storage", []):
+                    page.evaluate(f"window.localStorage.setItem('{item['name']}', '{item['value']}')")
+                page.reload()
+                page.wait_for_load_state("domcontentloaded")
 
             page.fill("#j_username", username)
             yield send_message("Gebruikersnaam ingevuld", "fas fa-user")
@@ -241,18 +251,16 @@ def vodafone_login(username, password, token, zoeknummer_raw):
                 bearer_token = bearer_token_container.get("token")
 
             sessie_data = setup_session_data(page, bearer_token, graphql_headers_container, graphql_payload_container)
+            save_session("vodafone", username, sessie_data)
+            yield send_message("Nieuwe sessie opgeslagen", "fas fa-save")
 
-            if bearer_token and zoeknummers:
-                resultaten = {}
-                for zn in zoeknummers:
-                    try:
-                        result = send_graphql_request(sessie_data, zn)
-                        resultaten[zn] = result
-                        yield send_message(f"Gegevens voor {zn} opgehaald.", "fas fa-search", True, result)
-                    except Exception as e:
-                        resultaten[zn] = {"error": str(e)}
-                        yield send_message(f"Fout bij ophalen van {zn}: {str(e)}", "fas fa-bug")
-                cache.set(f"graphql_result:{token}", resultaten, timeout=300)
+            if bearer_token and zoeknummer:
+                try:
+                    lookup_result = send_graphql_request(sessie_data, zoeknummer)
+                    cache.set(f"graphql_result:{token}", lookup_result, timeout=300)
+                    yield send_message("Nummergegevens opgehaald.", "fas fa-search", True, lookup_result)
+                except Exception as e:
+                    yield send_message(f"Lookup fout: {str(e)}", "fas fa-bug")
             else:
                 yield send_message("Fout: Bearer token niet gevonden", "fas fa-bug", False, sessie_data)
 
