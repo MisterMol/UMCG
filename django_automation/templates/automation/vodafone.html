@@ -92,18 +92,19 @@
                     <button type="button" class="btn-close" onclick="cancel2FA()" data-bs-dismiss="modal"
                         aria-label="Sluiten"></button>
                 </div>
-                <div class="modal-body">
-                    <p>Je hebt <span id="timer">180</span> seconden om de ontvangen sms-code in te voeren.</p>
-                    <input type="text" class="form-control mb-2" id="input2FACode" placeholder="Sms-code">
-                    <div class="d-flex justify-content-between">
-                        <button class="btn btn-danger" onclick="cancel2FA()">Annuleer</button>
-                        <button class="btn btn-success" onclick="submit2FACode()">Verstuur</button>
+                <form onsubmit="event.preventDefault(); submit2FACode();">
+                    <div class="modal-body">
+                        <p>Je hebt <span id="timer">180</span> seconden om de ontvangen sms-code in te voeren.</p>
+                        <input type="text" class="form-control mb-2" id="input2FACode" placeholder="Sms-code" required>
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-danger" onclick="cancel2FA()">Annuleer</button>
+                            <button type="submit" class="btn btn-success">Verstuur</button>
+                        </div>
                     </div>
-                </div>
+                </form>
             </div>
         </div>
     </div>
-
 </div>
 
 
@@ -169,22 +170,22 @@
     const persistentBox = document.getElementById("loginStatusPersistent");
 
     // Functie bovenaan de "LOG" om de user van huidige grote ontwikkelingen te attenderen
-        function updateLiveMessage(message, iconClass, type = "info") {
-            const liveBox = document.getElementById("loginStatusLive");
-            const messageEl = document.getElementById("loginStatusMessage");
+    function updateLiveMessage(message, iconClass, type = "info") {
+        const liveBox = document.getElementById("loginStatusLive");
+        const messageEl = document.getElementById("loginStatusMessage");
 
-            messageEl.classList.remove("in");
-            messageEl.classList.add("out");
+        messageEl.classList.remove("in");
+        messageEl.classList.add("out");
 
-            setTimeout(() => {
-                messageEl.innerHTML = `<i class="${iconClass} me-2"></i> ${message}`;
-                liveBox.className = `alert alert-${type} fade show mb-3`;
-                liveBox.classList.remove("d-none");
+        setTimeout(() => {
+            messageEl.innerHTML = `<i class="${iconClass} me-2"></i> ${message}`;
+            liveBox.className = `alert alert-${type} fade show mb-3`;
+            liveBox.classList.remove("d-none");
 
-                messageEl.classList.remove("out");
-                messageEl.classList.add("in");
-            }, 300);
-        }
+            messageEl.classList.remove("out");
+            messageEl.classList.add("in");
+        }, 300);
+    }
 
     function startVodafoneLogin(username, password, zoeknummer, csrfToken) {
         // Clear vorige resultaten & logs
@@ -320,16 +321,12 @@
 
         if (twoFAModal) {
             twoFAModal.addEventListener("shown.bs.modal", function () {
-                const input = document.getElementById("input2FACode");
-                if (input) {
-                    input.focus();
-                    input.addEventListener("keydown", function handleEnter(e) {
-                        if (e.key === "Enter") {
-                            e.preventDefault();
-                            submit2FACode();
-                        }
-                    }, { once: true });
-                }
+                setTimeout(() => {
+                    const input = document.getElementById("input2FACode");
+                    if (input) {
+                        input.focus();
+                    }
+                }, 100); 
             });
         }
     });
@@ -453,7 +450,7 @@
                     noTable.appendChild(tbody);
 
                     noResultContainer.innerHTML = `
-                    <div class="alert alert-secondary">
+                    <div class="alert alert-warning">
                         De volgende nummers leverden geen gegevens op:
                     </div>`;
                     noResultContainer.appendChild(noTable);
