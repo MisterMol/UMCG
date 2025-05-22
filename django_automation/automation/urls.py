@@ -4,7 +4,7 @@ from . import views
 urlpatterns = [
     path('dashboard/', views.dashboard, name='dashboard'), 
     path('vodafone/', views.vodafone, name='vodafone'),
-    path('vodafone/form/login', views.vodafone_login_form, name='vodafone_login_form'),
+    path('vodafone/form/login', views.vodafone_check_nummers_form, name='vodafone_check_nummers_form'),
     path('vodafone/login/stream', views.vodafone_login_stream, name='vodafone_login_stream'),
     path('vodafone/start-login/', views.start_vodafone_login, name='vodafone_start_login'),
     path('vodafone/stream/<uuid:token>/', views.vodafone_login_stream, name='vodafone_login_stream'),

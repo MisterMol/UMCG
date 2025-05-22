@@ -34,7 +34,7 @@
         <div class="col-lg-3">
             <div class="list-group shadow-sm">
                 <button type="button" class="list-group-item list-group-item-action"
-                    data-url="{% url 'vodafone_login_form' %}">
+                    data-url="{% url 'vodafone_check_nummers_form' %}" role="link">
                     <i class="fas fa-sign-in-alt me-2"></i> Nummer opzoeken
                 </button>
                 <button type="button" class="list-group-item list-group-item-action" data-url="#">
@@ -62,7 +62,12 @@
             <div id="loginStatusPersistent">
             </div>
         </div>
-        <div id="graphql-results" class="mt-4"></div>
+        <div id="graphql-results">
+        </div>
+
+        <div id="graphql-no-results" class="mt-4">
+        </div>
+
 
         {% if success %}
         <div class="col-12">
@@ -159,14 +164,11 @@
 <script>
     let currentToken = null;
     let twoFATimer = null;
+    const liveBox = document.getElementById("loginStatusLive");
+    const messageEl = document.getElementById("loginStatusMessage");
+    const persistentBox = document.getElementById("loginStatusPersistent");
 
-    function startVodafoneLogin(username, password, zoeknummer, csrfToken) {
-        const liveBox = document.getElementById("loginStatusLive");
-        const messageEl = document.getElementById("loginStatusMessage");
-        const persistentBox = document.getElementById("loginStatusPersistent");
-
-        let loginCompleted = false;
-
+    // Functie bovenaan de "LOG" om de user van huidige grote ontwikkelingen te attenderen
         function updateLiveMessage(message, iconClass, type = "info") {
             const liveBox = document.getElementById("loginStatusLive");
             const messageEl = document.getElementById("loginStatusMessage");
@@ -184,22 +186,17 @@
             }, 300);
         }
 
+    function startVodafoneLogin(username, password, zoeknummer, csrfToken) {
+        // Clear vorige resultaten & logs
+        document.getElementById("loginStatusPersistent").innerHTML = "";
+        document.getElementById("graphql-results").innerHTML = "";
+        document.getElementById("graphql-no-results").innerHTML = "";
+        document.getElementById("loginStatusLive").classList.add("d-none");
 
-        function addPersistentMessage(message, iconClass, type = "info") {
-            const alert = document.createElement("div");
-            alert.className = `alert alert-${type} mt-2`;
-            alert.innerHTML = `<i class="icon ${iconClass}"></i> ${message}`;
-            persistentBox.appendChild(alert);
-            persistentBox.scrollTop = persistentBox.scrollHeight;
-
-            const alerts = persistentBox.querySelectorAll(".alert");
-            if (alerts.length > 20) {
-                persistentBox.removeChild(alerts[0]);
-            }
-        }
-
+        let loginCompleted = false;
         updateLiveMessage("Verzoek wordt uitgevoerd...", "fas fa-spinner fa-spin", "info");
 
+        // Initialiseer de Login op de vodafone
         fetch("/automation/vodafone/start-login/", {
             method: "POST",
             headers: {
@@ -226,6 +223,9 @@
                         if (message.includes("2FA vereist")) {
                             updateLiveMessage("2FA vereist...", "fas fa-spinner fa-spin", "warning");
                             show2FAModal(currentToken);
+                        }
+                        if (message.includes("2FA code ingevuld")) {
+                            updateLiveMessage("2FA code ingevuld", "fas fa-spinner fa-spin", "warning");
                         }
 
                         if (message.includes("Loginproces voltooid")) {
@@ -256,8 +256,8 @@
             .catch(error => {
                 console.error("Loginfout:", error);
                 updateLiveMessage("Fout tijdens login: " + error.message, "fas fa-exclamation-circle", "danger");
-
             });
+
     }
 
     function show2FAModal(token) {
@@ -345,86 +345,136 @@
             },
             body: JSON.stringify({ token })
         })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) throw new Error("HTTP fout: " + response.status);
+                return response.json();
+            })
             .then(result => {
                 console.log("[GraphQL Resultaat]", result);
                 addPersistentMessage("GraphQL resultaat ontvangen!", "fas fa-database", "success");
 
-
                 const container = document.getElementById("graphql-results");
+                const noResultContainer = document.getElementById("graphql-no-results");
                 container.innerHTML = "";
+                noResultContainer.innerHTML = "";
 
                 const allContacts = [];
+                const noDataNumbers = [];
 
                 for (const msisdn in result) {
-                    const contacts = result[msisdn]?.data?.detailedOverviewData?.data?.contacts || [];
-                    contacts.forEach(contact => {
-                        contact.originalMsisdn = msisdn;
-                        allContacts.push(contact);
-                    });
+                    const contacts = result[msisdn]?.data?.detailedOverviewData?.data?.contacts;
+
+                    if (Array.isArray(contacts) && contacts.length > 0) {
+                        contacts.forEach(contact => {
+                            contact.originalMsisdn = msisdn;
+                            allContacts.push(contact);
+                        });
+                    } else {
+                        noDataNumbers.push(msisdn);
+                    }
                 }
 
-                if (allContacts.length === 0) {
-                    container.innerHTML = `<div class="alert alert-warning">Geen contactgegevens gevonden.</div>`;
-                    return;
-                }
+                // Toon tabel met contacten als er data is
+                if (allContacts.length > 0) {
+                    const columns = {
+                        originalMsisdn: "Telefoonnummer",
+                        vpnNumber: "VPN-nummer",
+                        formattedName: "Naam",
+                        formattedBillingCustomer: "Klantnaam",
+                        status: "Status",
+                        statusReason: "Status Reden",
+                        subscriptionType: "Abonnementstype",
+                        simNumbers: "SIM-nummers",
+                        outgoingRestriction: "Uitgaande restrictie",
+                        incomingRestriction: "Inkomende restrictie",
+                        restriction0900: "0900 Restrictie",
+                        isDataOnly: "Data Only",
+                        contactId: "Contact ID",
+                        subscriberId: "Abonnee ID",
+                        assignedProductId: "Product ID",
+                    };
 
-                // Selecteer kolommen die je wil tonen
-                const columns = [
-                    "originalMsisdn",
-                    "formattedName",
-                    "billingCustomerName",
-                    "email",
-                    "status",
-                    "subscriptionType",
-                    "vpnNumber",
-                    "simNumbers",
-                    "outgoingRestriction"
-                ];
 
-                const table = document.createElement("table");
-                table.className = "table table-bordered table-striped mt-3";
+                    const table = document.createElement("table");
+                    table.className = "table table-hover table-bordered table-striped";
 
-                const thead = document.createElement("thead");
-                const headRow = document.createElement("tr");
-                columns.forEach(key => {
-                    const th = document.createElement("th");
-                    th.textContent = key;
-                    headRow.appendChild(th);
-                });
-                thead.appendChild(headRow);
-                table.appendChild(thead);
+                    const thead = document.createElement("thead");
+                    const headRow = document.createElement("tr");
+                    for (const key in columns) {
+                        const th = document.createElement("th");
+                        th.scope = "col";
+                        th.textContent = columns[key];
+                        headRow.appendChild(th);
+                    }
+                    thead.appendChild(headRow);
+                    table.appendChild(thead);
 
-                const tbody = document.createElement("tbody");
-                allContacts.forEach(contact => {
-                    const row = document.createElement("tr");
-                    columns.forEach(key => {
-                        const td = document.createElement("td");
-                        let value = contact[key];
-
-                        if (Array.isArray(value)) {
-                            value = value.join(", ");
-                        } else if (value === null || value === undefined) {
-                            value = "-";
+                    const tbody = document.createElement("tbody");
+                    allContacts.forEach(contact => {
+                        const row = document.createElement("tr");
+                        for (const key in columns) {
+                            const td = document.createElement("td");
+                            let value = contact[key];
+                            if (Array.isArray(value)) {
+                                value = value.join(", ");
+                            } else if (value === null || value === undefined) {
+                                value = "-";
+                            }
+                            td.textContent = value;
+                            row.appendChild(td);
                         }
-
-                        td.textContent = value;
-                        row.appendChild(td);
+                        tbody.appendChild(row);
                     });
-                    tbody.appendChild(row);
-                });
+                    table.appendChild(tbody);
 
-                table.appendChild(tbody);
-                container.appendChild(table);
+                    container.appendChild(table);
+                } else {
+                    container.innerHTML = `
+                    <div class="alert alert-warning" role="alert">
+                        Geen contactgegevens gevonden voor enig nummer.
+                    </div>`;
+                }
+
+                // Toon nummers waarvoor geen data was
+                if (noDataNumbers.length > 0) {
+                    const noTable = document.createElement("table");
+                    noTable.className = "table table-sm table-bordered";
+
+                    const thead = document.createElement("thead");
+                    thead.innerHTML = `<tr class="table-danger"><th scope="col">Nummers zonder gegevens</th></tr>`;
+                    noTable.appendChild(thead);
+
+                    const tbody = document.createElement("tbody");
+                    noDataNumbers.forEach(num => {
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `<td>${num}</td>`;
+                        tbody.appendChild(tr);
+                    });
+                    noTable.appendChild(tbody);
+
+                    noResultContainer.innerHTML = `
+                    <div class="alert alert-secondary">
+                        De volgende nummers leverden geen gegevens op:
+                    </div>`;
+                    noResultContainer.appendChild(noTable);
+                }
             })
             .catch(error => {
                 console.error("Fout bij ophalen GraphQL resultaat:", error);
                 updateLiveMessage("Fout bij ophalen van resultaat", "fas fa-bug", "danger");
+
+                const container = document.getElementById("graphql-results");
+                container.innerHTML = `
+                <div class="alert alert-danger" role="alert">
+                    Er is een fout opgetreden bij het ophalen van de gegevens. Probeer het opnieuw of neem contact op met de support.
+                </div>`;
             });
     }
 
 
-    // Verplaats deze uit de functie startVodafoneLogin
+
+    // Functie om de log bij te werken, waar een maximaal aantal logs in kan voorkomen voordat de oude verwijderd
+    var maxLog = 20
     function addPersistentMessage(message, iconClass, type = "info") {
         const persistentBox = document.getElementById("loginStatusPersistent");
         const alert = document.createElement("div");
@@ -434,7 +484,7 @@
         persistentBox.scrollTop = persistentBox.scrollHeight;
 
         const alerts = persistentBox.querySelectorAll(".alert");
-        if (alerts.length > 20) {
+        if (alerts.length > maxLog) {
             persistentBox.removeChild(alerts[0]);
         }
     }

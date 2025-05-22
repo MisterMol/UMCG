@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from django.http import JsonResponse
-from playwright_scripts.login_script import vodafone_login, send_graphql_request
+from playwright_scripts.automation_scripts import vodafone_login, send_graphql_request
 from django.http import StreamingHttpResponse
 from playwright.sync_api import sync_playwright
 from urllib.parse import unquote
@@ -32,7 +32,7 @@ def vodafone(request):
     return render(request, 'automation/vodafone.html')
 
 
-def vodafone_login_form(request):
+def vodafone_check_nummers_form(request):
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
@@ -43,7 +43,7 @@ def vodafone_login_form(request):
         except Exception as e:
             return JsonResponse({'success': False, 'message': str(e)})
 
-    return render(request, 'automation/forms/vodafone_forms/vodafone_login_form.html')
+    return render(request, 'automation/forms/vodafone_forms/vodafone_check_nummers_form.html')
 
 
 def vodafone_login_stream(request, token):

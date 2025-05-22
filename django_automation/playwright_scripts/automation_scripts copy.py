@@ -28,7 +28,7 @@ def send_graphql_request(graphql_data, zoeknummer):
             "billingCustomerId": None,
             "queryParameters": {
                 "page": 0,
-                "size": 1000,
+                "size": 10,
                 "filters": [
                     {"id": "name_or_number_filter", "value": zoeknummer}
                 ]
@@ -95,10 +95,6 @@ def send_graphql_request(graphql_data, zoeknummer):
         return {"error": str(e)}
 
 
-
-import json
-import time
-from playwright.sync_api import sync_playwright
 
 def send_message(message, icon_class='', success=False, data=None):
     payload = {"message": message, "icon_class": icon_class, "success": success}
@@ -170,10 +166,11 @@ def setup_session_data(page, bearer_token, graphql_headers, graphql_payload):
         "local_storage": [{"name": k, "value": v} for k, v in local_storage]
     }
 
+
+
 def vodafone_login(username, password, token, zoeknummer_raw):
     yield send_message("Sessie ophalen...", "fas fa-cookie")
 
-    
     zoeknummers = [zn.strip() for zn in zoeknummer_raw.split(",") if zn.strip()]
     
     if not zoeknummers:
@@ -219,19 +216,15 @@ def vodafone_login(username, password, token, zoeknummer_raw):
                 page.fill("#code", code)
                 page.click("button[data-cy='confirm-sms-token-form-submit-button']")
                 yield send_message("2FA code ingevuld...", "fas fa-spinner fa-spin")
-
-                try:
-                    page.wait_for_selector("div[data-testid='search-employeeSearchBar-input']", timeout=15000)
-                    yield send_message("Ingelogd, dashboard zichtbaar.", "fas fa-check")
-                except:
-                    yield send_message("Waarschuwing: dashboard niet gevonden", "fas fa-exclamation")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_load_state("domcontentloaded")
 
             if "error.html" in page.url or "Inloggen is niet gelukt" in page.title():
                 yield send_message("Inloggen is niet gelukt.", "fas fa-times-circle")
                 return
 
             try:
-                page.click("#onetrust-reject-all-handler", timeout=1000, force=True)
+                page.click("#onetrust-reject-all-handler", timeout=15000, force=True)
                 yield send_message("Cookievoorkeuren afgehandeld.", "fas fa-cookie-bite")
             except:
                 yield send_message("Cookievoorkeuren niet gevonden of al verwerkt.", "fas fa-cookie-bite")
@@ -262,5 +255,17 @@ def vodafone_login(username, password, token, zoeknummer_raw):
             yield send_message("Loginproces voltooid.", "fas fa-info-circle", True)
             browser.close()
 
+
+
+def voer_vodafone_nummercheck_uit(username, password, token, zoeknummer_raw):
+    with sync_playwright() as p:
+            context, page = vodafone_login(p, username, password)
+
+            # Hier kun je dingen doen na inloggen
+            page.goto("https://www.vodafone.nl/zakelijk/my/v2/")
+            print("[INFO] Mijn Vodafone geopend.")
+            
+
+            context.close()    
 
 ### WERKENDE VERSIE
